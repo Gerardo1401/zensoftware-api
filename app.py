@@ -30,6 +30,35 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
+# 🚫 NUEVO: Validación previa antes de crear la cuenta
+@app.route("/api/registro/verificar-previo", methods=["POST"])
+def verificar_registro_previo():
+    try:
+        data = request.get_json()
+        required = ["correo", "correo_usuario", "hardware_id"]
+        if not all(key in data for key in required):
+            return jsonify({"success": False, "message": "Faltan datos requeridos."}), 400
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("SELECT id FROM empresas WHERE correo = ?", (data["correo"],))
+        if cur.fetchone():
+            return jsonify({"success": False, "message": "Correo de empresa ya registrado."}), 409
+
+        cur.execute("SELECT id FROM usuarios WHERE correo = ?", (data["correo_usuario"],))
+        if cur.fetchone():
+            return jsonify({"success": False, "message": "Correo de usuario ya registrado."}), 409
+
+        cur.execute("SELECT id FROM dispositivos WHERE hardware_id = ?", (data["hardware_id"],))
+        if cur.fetchone():
+            return jsonify({"success": False, "message": "Este equipo ya está registrado."}), 409
+
+        return jsonify({"success": True, "message": "Datos válidos. Puedes continuar."}), 200
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Error interno: {str(e)}"}), 500
+
 # 🚀 Registro de empresa + usuario + dispositivo
 @app.route("/api/registro", methods=["POST"])
 def registrar_empresa():
@@ -57,12 +86,10 @@ def registrar_empresa():
         conn = get_db()
         cur = conn.cursor()
 
-        # Verificar si ese hardware_id ya está en uso
         cur.execute("SELECT * FROM dispositivos WHERE hardware_id = ?", (hardware_id,))
         if cur.fetchone():
             return jsonify({"success": False, "message": "Este equipo ya está registrado por otra empresa."}), 403
 
-        # Verificar si ya existe la empresa o el usuario
         cur.execute("SELECT * FROM empresas WHERE correo = ?", (correo,))
         if cur.fetchone():
             return jsonify({"success": False, "message": "Ya existe una empresa con ese correo."}), 409
@@ -71,20 +98,17 @@ def registrar_empresa():
         if cur.fetchone():
             return jsonify({"success": False, "message": "Ya existe un usuario con ese correo."}), 409
 
-        # Registrar empresa
         cur.execute("""
             INSERT INTO empresas (nombre, rfc, direccion, telefono, correo, plan, estado)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (nombre_empresa, rfc, direccion, telefono, correo, plan, "pendiente"))
         empresa_id = cur.lastrowid
 
-        # Registrar usuario administrador
         cur.execute("""
             INSERT INTO usuarios (empresa_id, nombre, correo, telefono, contrasena, rol)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (empresa_id, nombre_usuario, correo_usuario, telefono_usuario, contrasena, "administrador"))
 
-        # Registrar dispositivo
         nombre_pc = os.environ.get("COMPUTERNAME", "PC-ZenCore")
         fecha_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
