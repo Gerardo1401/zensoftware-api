@@ -31,6 +31,15 @@ CREATE TABLE IF NOT EXISTS usuarios (
 )
 """)
 
+# Verificación
+cur.execute("""
+CREATE TABLE IF NOT EXISTS verificacion (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    correo TEXT NOT NULL,
+    codigo TEXT NOT NULL
+)
+""")
+
 conn.commit()
 conn.close()
-print("Base de datos creada correctamente.")
+print("✅ Base de datos 'usuarios.db' creada correctamente con todas las tablas.")
