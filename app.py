@@ -3,6 +3,7 @@ import sqlite3
 import os
 import random
 import smtplib
+from datetime import datetime
 from email.message import EmailMessage
 
 # ✅ Cargar .env solo si no existen variables del entorno
@@ -29,13 +30,13 @@ def get_db():
     conn.row_factory = sqlite3.Row
     return conn
 
-# 🚀 Registro de empresa + usuario
+# 🚀 Registro de empresa + usuario + dispositivo
 @app.route("/api/registro", methods=["POST"])
 def registrar_empresa():
     try:
         data = request.get_json()
 
-        required_empresa = ["nombre_empresa", "telefono", "correo"]
+        required_empresa = ["nombre_empresa", "telefono", "correo", "hardware_id"]
         required_usuario = ["nombre_usuario", "correo_usuario", "telefono_usuario", "contrasena"]
         if not all(key in data for key in required_empresa + required_usuario):
             return jsonify({"success": False, "message": "Faltan datos requeridos."}), 400
@@ -45,6 +46,7 @@ def registrar_empresa():
         direccion = data.get("direccion", "")
         telefono = data["telefono"]
         correo = data["correo"]
+        hardware_id = data["hardware_id"]
 
         nombre_usuario = data["nombre_usuario"]
         correo_usuario = data["correo_usuario"]
@@ -55,6 +57,12 @@ def registrar_empresa():
         conn = get_db()
         cur = conn.cursor()
 
+        # Verificar si ese hardware_id ya está en uso
+        cur.execute("SELECT * FROM dispositivos WHERE hardware_id = ?", (hardware_id,))
+        if cur.fetchone():
+            return jsonify({"success": False, "message": "Este equipo ya está registrado por otra empresa."}), 403
+
+        # Verificar si ya existe la empresa o el usuario
         cur.execute("SELECT * FROM empresas WHERE correo = ?", (correo,))
         if cur.fetchone():
             return jsonify({"success": False, "message": "Ya existe una empresa con ese correo."}), 409
@@ -63,17 +71,27 @@ def registrar_empresa():
         if cur.fetchone():
             return jsonify({"success": False, "message": "Ya existe un usuario con ese correo."}), 409
 
+        # Registrar empresa
         cur.execute("""
             INSERT INTO empresas (nombre, rfc, direccion, telefono, correo, plan, estado)
             VALUES (?, ?, ?, ?, ?, ?, ?)
         """, (nombre_empresa, rfc, direccion, telefono, correo, plan, "pendiente"))
-
         empresa_id = cur.lastrowid
 
+        # Registrar usuario administrador
         cur.execute("""
             INSERT INTO usuarios (empresa_id, nombre, correo, telefono, contrasena, rol)
             VALUES (?, ?, ?, ?, ?, ?)
         """, (empresa_id, nombre_usuario, correo_usuario, telefono_usuario, contrasena, "administrador"))
+
+        # Registrar dispositivo
+        nombre_pc = os.environ.get("COMPUTERNAME", "PC-ZenCore")
+        fecha_registro = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        cur.execute("""
+            INSERT INTO dispositivos (empresa_id, hardware_id, nombre_pc, fecha_registro)
+            VALUES (?, ?, ?, ?)
+        """, (empresa_id, hardware_id, nombre_pc, fecha_registro))
 
         conn.commit()
         conn.close()
@@ -90,6 +108,46 @@ def registrar_empresa():
             "message": f"Error interno en el servidor: {str(e)}"
         }), 500
 
+# 🔍 Verificación previa del hardware ID
+@app.route("/api/verificar-dispositivo", methods=["POST"])
+def verificar_dispositivo():
+    try:
+        data = request.get_json()
+        hardware_id = data.get("hardware_id")
+
+        if not hardware_id:
+            return jsonify({"success": False, "message": "Hardware ID no proporcionado."}), 400
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT empresas.nombre, empresas.id
+            FROM dispositivos
+            INNER JOIN empresas ON dispositivos.empresa_id = empresas.id
+            WHERE dispositivos.hardware_id = ?
+        """, (hardware_id,))
+        resultado = cur.fetchone()
+
+        if resultado:
+            return jsonify({
+                "success": True,
+                "registrado": True,
+                "empresa": resultado["nombre"],
+                "empresa_id": resultado["id"]
+            }), 200
+        else:
+            return jsonify({
+                "success": True,
+                "registrado": False
+            }), 200
+
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "message": f"Error interno al verificar: {str(e)}"
+        }), 500
+
 # ✉️ Envío de código de verificación por correo
 @app.route("/api/verificar-correo", methods=["POST"])
 def enviar_codigo_verificacion():
@@ -100,19 +158,13 @@ def enviar_codigo_verificacion():
         if not correo:
             return jsonify({"success": False, "message": "Correo no proporcionado."}), 400
 
-        # Código aleatorio
         codigo = str(random.randint(100000, 999999))
 
-        # Guardamos código temporal
         conn = get_db()
         cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO verificacion (correo, codigo)
-            VALUES (?, ?)
-        """, (correo, codigo))
+        cur.execute("INSERT INTO verificacion (correo, codigo) VALUES (?, ?)", (correo, codigo))
         conn.commit()
 
-        # Envío de correo
         msg = EmailMessage()
         msg.set_content(f"Tu código de verificación es: {codigo}")
         msg['Subject'] = "Código de verificación – Zen Software"
