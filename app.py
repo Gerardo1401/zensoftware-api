@@ -209,6 +209,48 @@ def validar_codigo():
     except Exception as e:
         return jsonify({"success": False, "message": f"Error al validar código: {str(e)}"}), 500
 
+# 🔐 Login de usuario
+@app.route("/api/login", methods=["POST"])
+def login_usuario():
+    try:
+        data = request.get_json()
+        correo = data.get("correo_usuario")
+        contrasena = data.get("contrasena")
+
+        if not correo or not contrasena:
+            return jsonify({"success": False, "message": "Datos incompletos."}), 400
+
+        conn = get_db()
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT usuarios.*, empresas.nombre AS empresa_nombre
+            FROM usuarios
+            INNER JOIN empresas ON usuarios.empresa_id = empresas.id
+            WHERE usuarios.correo = ? AND usuarios.contrasena = ?
+        """, (correo, contrasena))
+
+        usuario = cur.fetchone()
+
+        if usuario:
+            return jsonify({
+                "success": True,
+                "message": "Login exitoso.",
+                "usuario": {
+                    "id": usuario["id"],
+                    "nombre": usuario["nombre"],
+                    "correo": usuario["correo"],
+                    "rol": usuario["rol"],
+                    "empresa_id": usuario["empresa_id"],
+                    "empresa_nombre": usuario["empresa_nombre"]
+                }
+            }), 200
+        else:
+            return jsonify({"success": False, "message": "Credenciales incorrectas."}), 401
+
+    except Exception as e:
+        return jsonify({"success": False, "message": f"Error interno: {str(e)}"}), 500
+
 # 🟢 Ejecutar app localmente
 if __name__ == "__main__":
     app.run(debug=True)
